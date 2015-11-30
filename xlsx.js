@@ -7828,6 +7828,10 @@ function write_ws_xml(idx, opts, wb) {
 		if(rdata.length > 0) o[o.length] = (rdata);
 	}
 	if(o.length>sidx+1) { o[o.length] = ('</sheetData>'); o[sidx]=o[sidx].replace("/>",">"); }
+	
+	if (opts.pageSetupString !== undefined) {
+		o.push(opts.pageSetupString);
+	};
 
 	if(ws['!merges'] !== undefined && ws['!merges'].length > 0) o[o.length] = (write_ws_xml_merges(ws['!merges']));
 
