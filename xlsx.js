@@ -4,7 +4,7 @@
 /*jshint funcscope:true, eqnull:true */
 var XLSX = {};
 (function make_xlsx(XLSX){
-XLSX.version = '0.8.0';
+XLSX.version = '0.8.16';
 var current_codepage = 1200, current_cptable;
 if(typeof module !== "undefined" && typeof require !== 'undefined') {
 	if(typeof cptable === 'undefined') cptable = require('./dist/cpexcel');
@@ -1314,8 +1314,14 @@ function getdata(data) {
 
 function safegetzipfile(zip, file) {
 	var f = file; if(zip.files[f]) return zip.files[f];
-	f = file.toLowerCase(); if(zip.files[f]) return zip.files[f];
-	f = f.replace(/\//g,'\\'); if(zip.files[f]) return zip.files[f];
+
+	var lowerCaseFiles = {};
+	for (var key in zip.files) {
+		lowerCaseFiles[key.toLowerCase()] = zip.files[key];
+	}
+
+	f = file.toLowerCase(); if(lowerCaseFiles[f]) return lowerCaseFiles[f];
+	f = f.replace(/\//g,'\\'); if(lowerCaseFiles[f]) return lowerCaseFiles[f];
 	return null;
 }
 
@@ -2602,15 +2608,22 @@ function cp_doit(f, g, h, o, p) {
 
 function write_core_props(cp, opts) {
 	var o = [XML_HEADER, CORE_PROPS_XML_ROOT], p = {};
-	if(!cp) return o.join("");
+  if (opts && opts.Props) {
+    if (opts.Props.title) o[o.length]       = '<dc:title>'       + opts.Props.title        + '</dc:title>';
+    if (opts.Props.subject) o[o.length]     = '<dc:subject>'     + opts.Props.subject      + '</dc:subject>';
+    if (opts.Props.creator) o[o.length]     = '<dc:creator>'     + opts.Props.creator      + '</dc:creator>';
+    if (opts.Props.keywords) o[o.length]    = '<cp:keywords>'    + opts.Props.keywords      + '</cp:keywords>';
+    if (opts.Props.description) o[o.length] = '<dc:description>' + opts.Props.description  + '</dc:description>';
+  }
+  if(cp) {
 
+    if(cp.CreatedDate != null) cp_doit("dcterms:created", typeof cp.CreatedDate === "string" ? cp.CreatedDate : write_w3cdtf(cp.CreatedDate, opts.WTF), {"xsi:type":"dcterms:W3CDTF"}, o, p);
+    if(cp.ModifiedDate != null) cp_doit("dcterms:modified", typeof cp.ModifiedDate === "string" ? cp.ModifiedDate : write_w3cdtf(cp.ModifiedDate, opts.WTF), {"xsi:type":"dcterms:W3CDTF"}, o, p);
 
-	if(cp.CreatedDate != null) cp_doit("dcterms:created", typeof cp.CreatedDate === "string" ? cp.CreatedDate : write_w3cdtf(cp.CreatedDate, opts.WTF), {"xsi:type":"dcterms:W3CDTF"}, o, p);
-	if(cp.ModifiedDate != null) cp_doit("dcterms:modified", typeof cp.ModifiedDate === "string" ? cp.ModifiedDate : write_w3cdtf(cp.ModifiedDate, opts.WTF), {"xsi:type":"dcterms:W3CDTF"}, o, p);
-
-	for(var i = 0; i != CORE_PROPS.length; ++i) { var f = CORE_PROPS[i]; cp_doit(f[0], cp[f[1]], null, o, p); }
-	if(o.length>2){ o[o.length] = ('</cp:coreProperties>'); o[1]=o[1].replace("/>",">"); }
-	return o.join("");
+  	for(var i = 0; i != CORE_PROPS.length; ++i) { var f = CORE_PROPS[i]; cp_doit(f[0], cp[f[1]], null, o, p); }
+  }
+  if(o.length>2){ o[o.length] = ('</cp:coreProperties>'); o[1]=o[1].replace("/>",">"); }
+  return o.join("");
 }
 /* 15.2.12.3 Extended File Properties Part */
 /* [MS-OSHARED] 2.3.3.2.[1-2].1 (PIDSI/PIDDSI) */
@@ -7595,6 +7608,17 @@ function write_ws_xml_merges(merges) {
 	return o + '</mergeCells>';
 }
 
+function write_ws_xml_pagesetup(setup) {
+  var pageSetup =  writextag('pageSetup', null, {
+    scale: setup.scale || '100',
+    orientation: setup.orientation || 'portrait',
+    horizontalDpi : setup.horizontalDpi || '4294967292',
+    verticalDpi : setup.verticalDpi || '4294967292'
+  })
+  return pageSetup;
+}
+
+
 function parse_ws_xml_hlinks(s, data, rels) {
 	for(var i = 0; i != data.length; ++i) {
 		var val = parsexmltag(data[i], true);
@@ -7752,6 +7776,7 @@ return function parse_ws_xml_data(sdata, s, opts, guess) {
           if(isNaN(p.v)) p.v = "" // we don't want NaN if p.v is null
           break;
 				case 's':
+					if (!p.hasOwnProperty('v')) continue;
 					sstr = strs[parseInt(p.v, 10)];
 					p.v = sstr.t;
 					p.r = sstr.r;
@@ -7821,6 +7846,13 @@ function write_ws_xml(idx, opts, wb) {
 	var ref = ws['!ref']; if(ref === undefined) ref = 'A1';
 	o[o.length] = (writextag('dimension', null, {'ref': ref}));
 
+  var sheetView = writextag('sheetView', null,  {
+    showGridLines: opts.showGridLines == false ? '0' : '1',
+    tabSelected: opts.tabSelected === undefined ? '0' :  opts.tabSelected,  // see issue #26, need to set WorkbookViews if this is set
+    workbookViewId: opts.workbookViewId === undefined ? '0' : opts.workbookViewId
+  });
+  o[o.length] = writextag('sheetViews', sheetView);
+
 	if(ws['!cols'] !== undefined && ws['!cols'].length > 0) o[o.length] = (write_ws_xml_cols(ws, ws['!cols']));
 	o[sidx = o.length] = '<sheetData/>';
 	if(ws['!ref'] !== undefined) {
@@ -7835,8 +7867,33 @@ function write_ws_xml(idx, opts, wb) {
 
 	if(ws['!merges'] !== undefined && ws['!merges'].length > 0) o[o.length] = (write_ws_xml_merges(ws['!merges']));
 
+  if (ws['!pageSetup'] !== undefined) o[o.length] =  write_ws_xml_pagesetup(ws['!pageSetup']);
+  if (ws['!rowBreaks'] !== undefined) o[o.length] =  write_ws_xml_row_breaks(ws['!rowBreaks']);
+  if (ws['!colBreaks'] !== undefined) o[o.length] =  write_ws_xml_col_breaks(ws['!colBreaks']);
+
 	if(o.length>2) { o[o.length] = ('</worksheet>'); o[1]=o[1].replace("/>",">"); }
 	return o.join("");
+}
+
+function write_ws_xml_row_breaks(breaks) {
+  console.log("Writing breaks")
+  var brk = [];
+  for (var i=0; i<breaks.length; i++) {
+    var thisBreak = ''+ (breaks[i]);
+    var nextBreak = '' + (breaks[i+1] || '16383');
+    brk.push(writextag('brk', null, {id: thisBreak, max: nextBreak, man: '1'}))
+  }
+  return writextag('rowBreaks', brk.join(' '), {count: brk.length, manualBreakCount: brk.length})
+}
+function write_ws_xml_col_breaks(breaks) {
+  console.log("Writing breaks");
+  var brk = [];
+  for (var i=0; i<breaks.length; i++) {
+    var thisBreak = ''+ (breaks[i]);
+    var nextBreak = '' + (breaks[i+1] || '1048575');
+    brk.push(writextag('brk', null, {id: thisBreak, max: nextBreak, man: '1'}))
+  }
+  return writextag('colBreaks', brk.join(' '), {count: brk.length, manualBreakCount: brk.length})
 }
 
 /* [MS-XLSB] 2.4.718 BrtRowHdr */
@@ -8513,6 +8570,40 @@ function write_wb_xml(wb, opts) {
 	for(var i = 0; i != wb.SheetNames.length; ++i)
 		o[o.length] = (writextag('sheet',null,{name:wb.SheetNames[i].substr(0,31), sheetId:""+(i+1), "r:id":"rId"+(i+1)}));
 	o[o.length] = "</sheets>";
+
+  var hasPrintHeaders = false;
+  for(var i = 0; i != wb.SheetNames.length; ++i) {
+    var sheetName = wb.SheetNames[i];
+    var sheet = wb.Sheets[sheetName]
+    if (sheet['!printHeader']) {
+      if (sheet['!printHeader'].length !== 2) {
+        throw "!printHeaders must be an array of length 2: "+sheet['!printHeader'];
+
+      }
+      hasPrintHeaders = true;
+    }
+
+  }
+
+  if (hasPrintHeaders) {
+    o[o.length] = '<definedNames>';
+    for(var i = 0; i != wb.SheetNames.length; ++i) {
+      var sheetName = wb.SheetNames[i];
+      var sheet = wb.Sheets[sheetName]
+      if (sheet['!printHeader']) {
+          var printHeader = sheet['!printHeader'];
+
+        var range = "'" + sheetName + "'!$" + printHeader[0] + ":$" + printHeader[1];
+
+        o[o.length] = (writextag('definedName', range, {
+          "name":"_xlnm.Print_Titles",
+          localSheetId : ''+i
+        }))
+      }
+    }
+    o[o.length] = '</definedNames>';
+  }
+
 	if(o.length>2){ o[o.length] = '</workbook>'; o[1]=o[1].replace("/>",">"); }
 	return o.join("");
 }
@@ -12278,11 +12369,9 @@ var XmlNode = (function () {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&apos;');
 
-
         var $numFmt = XmlNode('numFmt')
             .attr('numFmtId', (++customNumFmtId))
             .attr('formatCode', numFmt);
-
 
         this.$numFmts.append($numFmt);
 
